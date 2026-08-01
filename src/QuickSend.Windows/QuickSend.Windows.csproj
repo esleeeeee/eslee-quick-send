@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>Eslee.QuickSend.Windows</RootNamespace>
+    <AssemblyName>eslee QuickSend</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\eslee-quicksend.ico</ApplicationIcon>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- The publish folder is copied to machines without the .NET runtime installed, so
+         the .NET runtime ships alongside the self-contained Windows App SDK. -->
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Shipped beside the app so the tray icon resolves from the publish folder too. -->
+    <Content Include="Assets\eslee-quicksend.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\eslee-quicksend-tray.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../QuickSend.Core/QuickSend.Core.csproj" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.2.0" />
+    <PackageReference Include="Makaretu.Dns.Multicast" Version="0.27.0" />
+    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.4.1" />
+  </ItemGroup>
+
+  <Target Name="CopyGeneratedWinUiResourcesToPublishDirectory" AfterTargets="Publish">
+    <ItemGroup>
+      <GeneratedWinUiPublishResource Include="$(TargetDir)*.xbf" />
+      <GeneratedWinUiPublishResource Include="$(TargetDir)$(AssemblyName).pri"
+                                     Condition="Exists('$(TargetDir)$(AssemblyName).pri')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(GeneratedWinUiPublishResource)"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+</Project>

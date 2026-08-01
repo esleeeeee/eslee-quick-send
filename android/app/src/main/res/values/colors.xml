@@ -1,0 +1,8 @@
+<resources>
+    <color name="brand">#176B5B</color>
+    <color name="brand_dark">#83D5C2</color>
+    <!-- Sampled from the master artwork so the adaptive icon background matches the
+         squircle in eslee-quicksend-master.png exactly. -->
+    <color name="ic_launcher_background">#199D77</color>
+</resources>
+
