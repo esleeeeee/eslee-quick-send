@@ -47,3 +47,7 @@ secrets/
 *.log
 *.ndjson
 logs/
+
+# The approved master artwork is tracked at assets/branding/eslee-quicksend-master.png.
+# This is the original drop copy kept in place for the author; it is the same image.
+/eslee-quick-send.png
