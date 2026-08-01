@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="src/QuickSend.Core/QuickSend.Core.csproj" />
+  <Project Path="src/QuickSend.Windows/QuickSend.Windows.csproj" />
+  <Project Path="tests/QuickSend.Core.Tests/QuickSend.Core.Tests.csproj" />
+  <Project Path="tests/QuickSend.Windows.Persistence.Tests/QuickSend.Windows.Persistence.Tests.csproj" />
+</Solution>

@@ -1,0 +1,49 @@
+# IDE / editor
+.idea/
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Build output
+**/bin/
+**/obj/
+**/build/
+**/.gradle/
+**/.kotlin/
+artifacts/
+benchmark-results/
+
+# Distributable artifacts belong on the GitHub Release, never in the source tree
+*.apk
+*.aab
+*.zip
+*.7z
+*.msi
+*Setup.exe
+
+# Machine-specific configuration
+local.properties
+
+# Secrets, signing material and device identity
+*.keystore
+*.jks
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
+secrets/
+**/google-services.json
+
+# Runtime user data: database, checkpoints and diagnostics
+*.db
+*.db-shm
+*.db-wal
+*.db.invalid-*
+*.esqpart
+.eslee-quicksend/
+*.log
+*.ndjson
+logs/
