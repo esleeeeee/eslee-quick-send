@@ -25,6 +25,7 @@ public sealed class TrayIconService : IDisposable
     private readonly nint _ownerHwnd;
     private readonly DispatcherQueue _uiDispatcher;
     private readonly TaskbarIcon _icon;
+    private bool _iconVisible = true;
     private bool _disposed;
 
     public TrayIconService(DiagnosticLog log, nint ownerHwnd, DispatcherQueue uiDispatcher)
@@ -65,11 +66,39 @@ public sealed class TrayIconService : IDisposable
 
     public void ShowTransferContinuesNotice()
     {
+        if (!_iconVisible)
+        {
+            // Tray Folder Hosted 모드로 아이콘이 숨겨진 동안에는 풍선을 표시할 수 없습니다.
+            _log.Info("tray.transfer_continues_notice.suppressed_hidden");
+            return;
+        }
+
         _log.Info("tray.transfer_continues_notice");
         _icon.ShowNotification(
             "eslee QuickSend",
             "전송은 백그라운드에서 계속됩니다.",
             NotificationIcon.Info);
+    }
+
+    /// <summary>
+    /// Tray Folder Hosted 모드 전환용 아이콘 표시 제어입니다. 아이콘만 표시/제거되며
+    /// 수신 대기와 전송 동작은 그대로 유지됩니다. UI 스레드에서 호출하세요.
+    /// </summary>
+    public void SetTrayIconVisible(bool visible)
+    {
+        if (_disposed || visible == _iconVisible) return;
+        _log.Info("tray.visibility", new { visible });
+        try
+        {
+            _icon.Visibility = visible
+                ? Microsoft.UI.Xaml.Visibility.Visible
+                : Microsoft.UI.Xaml.Visibility.Collapsed;
+            _iconVisible = visible;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("tray.visibility.failed", ex);
+        }
     }
 
     public void Dispose()
