@@ -19,6 +19,7 @@ public static class AppServices
     public static MdnsDiscoveryService Discovery { get; } = new();
     public static TransferCoordinator Coordinator { get; } = new(TransferStore, Trust, Identity, DeviceName, Discovery, Log, ReceiveDirectory);
     public static HistoryService History { get; } = new(Database);
+    public static Updates.UpdateCheckService Updates { get; } = new(Database, Log);
     public static Startup.AutoStartService AutoStart { get; } =
         new(Environment.ProcessPath ?? System.Reflection.Assembly.GetEntryAssembly()?.Location ?? string.Empty);
     private static readonly SemaphoreSlim InitializationGate = new(1, 1);
@@ -51,6 +52,8 @@ public static class AppServices
             // A rename only rewrites the TXT name; the device id and fingerprint are unchanged.
             DeviceName.NameChanged += (_, updated) => _ = Discovery.UpdateDeviceNameAsync(updated);
             Coordinator.StartRecovery();
+            // Fire-and-forget: the update check must never delay startup or transfers.
+            Updates.Start();
             _initialized = true;
         }
         finally
@@ -64,6 +67,15 @@ public static class AppServices
         if (_disposed) return;
         _disposed = true;
         await Log.InfoAsync("services.shutdown.start").ConfigureAwait(false);
+        try
+        {
+            Updates.Dispose();
+        }
+        catch (Exception ex)
+        {
+            await Log.ErrorAsync("services.updates.dispose.failed", ex).ConfigureAwait(false);
+        }
+
         try
         {
             Coordinator.Dispose();

@@ -1,6 +1,7 @@
 using Eslee.QuickSend.Core.Persistence;
 using Eslee.QuickSend.Core.Transfers;
 using Eslee.QuickSend.Windows.Persistence;
+using Eslee.QuickSend.Windows.Updates;
 using Microsoft.Data.Sqlite;
 
 SQLitePCL.Batteries_V2.Init();
@@ -177,6 +178,62 @@ try
     Console.WriteLine("PASS Windows stuck-record cleanup keeps running transfers");
     Console.WriteLine("PASS Windows history auto-refresh events fire after commit");
     Console.WriteLine("PASS Windows queue wording separates queued from other waiting states");
+
+    // ---- Update check policy -----------------------------------------------------
+
+    // Tag parsing: the repository tags releases as vX.Y.Z.
+    Assert(Equals(UpdateCheckPolicy.TryParseTag("v0.0.3"), new Version(0, 0, 3)), "v-prefixed tag did not parse.");
+    Assert(Equals(UpdateCheckPolicy.TryParseTag("V1.2.3"), new Version(1, 2, 3)), "Uppercase V tag did not parse.");
+    Assert(Equals(UpdateCheckPolicy.TryParseTag(" 0.0.3 "), new Version(0, 0, 3)), "Bare padded tag did not parse.");
+    Assert(UpdateCheckPolicy.TryParseTag("release-1") is null, "Junk tag was accepted.");
+    Assert(UpdateCheckPolicy.TryParseTag(null) is null, "Null tag was accepted.");
+    Assert(UpdateCheckPolicy.TryParseTag("") is null, "Empty tag was accepted.");
+
+    // The SDK appends the source revision to the informational version; it must be stripped.
+    Assert(Equals(UpdateCheckPolicy.NormalizeCurrentVersion("0.0.3"), new Version(0, 0, 3)), "Plain informational version did not parse.");
+    Assert(Equals(UpdateCheckPolicy.NormalizeCurrentVersion("0.0.3+82d470fabc"), new Version(0, 0, 3)), "+revision suffix was not stripped.");
+    Assert(Equals(UpdateCheckPolicy.NormalizeCurrentVersion("0.0.3-preview1"), new Version(0, 0, 3)), "-prerelease suffix was not stripped.");
+    Assert(UpdateCheckPolicy.NormalizeCurrentVersion(null) is null, "Null informational version was accepted.");
+
+    // Release payload parsing: drafts and prereleases are excluded even if they leak through.
+    var official = UpdateCheckPolicy.ParseLatestRelease(
+        """{"tag_name":"v0.0.4","html_url":"https://github.com/esleeeeee/eslee-quick-send/releases/tag/v0.0.4","draft":false,"prerelease":false}""");
+    Assert(official is not null && Equals(official.Version, new Version(0, 0, 4)), "Official release payload did not parse.");
+    Assert(official!.HtmlUrl.EndsWith("v0.0.4", StringComparison.Ordinal), "Release URL was not captured.");
+    Assert(UpdateCheckPolicy.ParseLatestRelease(
+        """{"tag_name":"v0.0.9","html_url":"x","prerelease":true}""") is null, "A prerelease payload was accepted.");
+    Assert(UpdateCheckPolicy.ParseLatestRelease(
+        """{"tag_name":"v0.0.9","html_url":"x","draft":true}""") is null, "A draft payload was accepted.");
+    Assert(UpdateCheckPolicy.ParseLatestRelease("""{"html_url":"x"}""") is null, "A payload without tag_name was accepted.");
+    Assert(UpdateCheckPolicy.ParseLatestRelease("not json") is null, "Malformed JSON was accepted.");
+    Assert(UpdateCheckPolicy.ParseLatestRelease("[1,2]") is null, "A non-object payload was accepted.");
+
+    // Comparison: only a strictly newer official release counts as an update.
+    var current = new Version(0, 0, 3);
+    Assert(UpdateCheckPolicy.Classify(current, new Version(0, 0, 4)) == UpdateStatusKind.UpdateAvailable, "Newer release was not an update.");
+    Assert(UpdateCheckPolicy.Classify(current, new Version(0, 0, 3)) == UpdateStatusKind.UpToDate, "Equal release was not up to date.");
+    Assert(UpdateCheckPolicy.Classify(current, new Version(0, 0, 2)) == UpdateStatusKind.UpToDate, "Older release was not up to date.");
+
+    // Interval gate: startup checks reuse a fresh cache and never hammer the API.
+    var checkNow = DateTimeOffset.UtcNow;
+    Assert(UpdateCheckPolicy.ShouldCheck(null, checkNow), "A never-checked state was gated.");
+    Assert(!UpdateCheckPolicy.ShouldCheck(checkNow.AddHours(-1), checkNow), "A one-hour-old check was repeated.");
+    Assert(UpdateCheckPolicy.ShouldCheck(checkNow.AddHours(-25), checkNow), "A stale check was not repeated.");
+    Assert(UpdateCheckPolicy.ShouldCheck(checkNow.AddHours(2), checkNow), "A future timestamp (clock change) was trusted.");
+
+    // Cache round-trip through the same settings table the service uses.
+    var cacheDb = new AppDatabase(Path.Combine(root, "updates.db"));
+    await cacheDb.InitializeAsync();
+    await cacheDb.SetSettingAsync("update.last_checked_utc", checkNow.ToString("O"));
+    await cacheDb.SetSettingAsync("update.latest_tag", "v0.0.4");
+    var roundTripped = await cacheDb.GetSettingAsync("update.last_checked_utc");
+    Assert(DateTimeOffset.TryParse(roundTripped, null, System.Globalization.DateTimeStyles.RoundtripKind, out var restored)
+        && restored == checkNow, "Last-checked timestamp did not round-trip.");
+    Assert(Equals(UpdateCheckPolicy.TryParseTag(await cacheDb.GetSettingAsync("update.latest_tag")), new Version(0, 0, 4)),
+        "Cached tag did not round-trip.");
+
+    Console.WriteLine("PASS Update tag/version parsing and prerelease exclusion");
+    Console.WriteLine("PASS Update interval gate and cache round-trip");
     return 0;
 }
 catch (Exception error)

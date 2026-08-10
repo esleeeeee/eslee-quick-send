@@ -40,6 +40,8 @@ public sealed partial class MainWindow : Window
         HistoryList.ItemsSource = _history;
         DeviceNameText.Text = AppServices.DeviceName.Current;
         ReceiveFolderText.Text = $"받은 파일: {AppServices.ReceiveDirectory}";
+        VersionText.Text = $"버전 {AppServices.Updates.CurrentVersionText}";
+        ApplyUpdateStatus(AppServices.Updates.Status);
         AppWindow.Resize(new global::Windows.Graphics.SizeInt32(1080, 760));
         if (AppWindow.Presenter is OverlappedPresenter presenter)
             presenter.PreferredMinimumWidth = 840;
@@ -56,6 +58,7 @@ public sealed partial class MainWindow : Window
         AppServices.TransferStore.Changed += Store_Changed;
         AppServices.History.Changed += Store_Changed;
         AppServices.Coordinator.RunningTransfersChanged += Store_Changed;
+        AppServices.Updates.StatusChanged += Updates_StatusChanged;
 
         try
         {
@@ -323,6 +326,48 @@ public sealed partial class MainWindow : Window
     private void DeviceName_Changed(object? sender, string name) =>
         EnqueueUi("device-name-changed", () => DeviceNameText.Text = name);
 
+    private void Updates_StatusChanged(object? sender, Updates.UpdateStatus status) =>
+        EnqueueUi("update-status-changed", () => ApplyUpdateStatus(status));
+
+    /// <summary>
+    /// The 이 PC card only speaks up when an update actually exists; up-to-date and
+    /// failed checks stay quiet there and are visible in the settings dialog instead.
+    /// </summary>
+    private void ApplyUpdateStatus(Updates.UpdateStatus status)
+    {
+        if (status.Kind == Updates.UpdateStatusKind.UpdateAvailable && status.LatestTag is { } tag)
+        {
+            UpdateStatusText.Text = $"새 버전 {tag} 사용 가능 - 설정에서 확인하세요";
+            UpdateStatusText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            UpdateStatusText.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private static string UpdateStatusMessage(Updates.UpdateStatus status) => status.Kind switch
+    {
+        Updates.UpdateStatusKind.UpdateAvailable => $"새 버전 {status.LatestTag} 사용 가능",
+        Updates.UpdateStatusKind.UpToDate => "최신 버전입니다",
+        Updates.UpdateStatusKind.CheckFailed => "업데이트 정보를 확인하지 못했습니다",
+        _ => "아직 확인하지 않았습니다",
+    };
+
+    private static void OpenReleasesPage(string? url)
+    {
+        var target = string.IsNullOrWhiteSpace(url) ? Updates.UpdateCheckService.ReleasesPageUrl : url;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(target) { UseShellExecute = true });
+            AppServices.Log.Info("update.releases_page.opened", new { target });
+        }
+        catch (Exception ex)
+        {
+            AppServices.Log.Error("update.releases_page.open_failed", ex);
+        }
+    }
+
     /// <summary>
     /// Keeps the transfer buttons and the disconnect/reconnect toggle in sync with the
     /// selected peer. A manual disconnect blocks transfers until the user reconnects.
@@ -445,6 +490,33 @@ public sealed partial class MainWindow : Window
         try { autoStart.IsChecked = AppServices.AutoStart.IsEnabled(); }
         catch (Exception ex) { AppServices.Log.Warn("autostart.read.failed", new { error = ex.GetType().Name }); }
 
+        // Version block: current version, last check outcome, a manual check and a link
+        // to the releases page. The check runs while the dialog stays open.
+        var updateStatusText = new TextBlock
+        {
+            Text = UpdateStatusMessage(AppServices.Updates.Status),
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 12,
+            Opacity = 0.7
+        };
+        var checkUpdatesButton = new Button { Content = "업데이트 확인" };
+        var openReleasesButton = new Button { Content = "Release 페이지 열기" };
+        checkUpdatesButton.Click += async (_, _) =>
+        {
+            checkUpdatesButton.IsEnabled = false;
+            updateStatusText.Text = "확인 중...";
+            try
+            {
+                var status = await AppServices.Updates.CheckAsync(force: true);
+                updateStatusText.Text = UpdateStatusMessage(status);
+            }
+            finally
+            {
+                checkUpdatesButton.IsEnabled = true;
+            }
+        };
+        openReleasesButton.Click += (_, _) => OpenReleasesPage(AppServices.Updates.Status.ReleaseUrl);
+
         var dialog = new ContentDialog
         {
             XamlRoot = Content.XamlRoot,
@@ -463,6 +535,14 @@ public sealed partial class MainWindow : Window
                         TextWrapping = TextWrapping.Wrap,
                         FontSize = 12,
                         Opacity = 0.7
+                    },
+                    new TextBlock { Text = $"현재 버전 {AppServices.Updates.CurrentVersionText}", TextWrapping = TextWrapping.Wrap },
+                    updateStatusText,
+                    new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 8,
+                        Children = { checkUpdatesButton, openReleasesButton }
                     },
                     new TextBlock { Text = "자동 이어받기: 켜짐 · 전송 중 절전 방지: 켜짐 · 프로토콜 v1", FontSize = 12, Opacity = 0.7 }
                 }
@@ -812,6 +892,7 @@ public sealed partial class MainWindow : Window
         AppServices.TransferStore.Changed -= Store_Changed;
         AppServices.History.Changed -= Store_Changed;
         AppServices.Coordinator.RunningTransfersChanged -= Store_Changed;
+        AppServices.Updates.StatusChanged -= Updates_StatusChanged;
         AppWindow.Closing -= AppWindow_Closing;
         _trayFolderLink?.Dispose();
         _trayFolderLink = null;

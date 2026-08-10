@@ -10,5 +10,6 @@
     <Compile Include="../../src/QuickSend.Windows/Persistence/AppDatabase.cs" Link="Persistence/AppDatabase.cs" />
     <Compile Include="../../src/QuickSend.Windows/Persistence/HistoryService.cs" Link="Persistence/HistoryService.cs" />
     <Compile Include="../../src/QuickSend.Windows/Persistence/SqliteTransferStore.cs" Link="Persistence/SqliteTransferStore.cs" />
+    <Compile Include="../../src/QuickSend.Windows/Updates/UpdateCheckPolicy.cs" Link="Updates/UpdateCheckPolicy.cs" />
   </ItemGroup>
 </Project>
