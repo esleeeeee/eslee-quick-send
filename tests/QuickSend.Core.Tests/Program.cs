@@ -33,7 +33,9 @@ var tests = new (string Name, Func<Task> Run)[]
     ("stuck rows are settled while live jobs stay protected", HistoryPolicySeparatesStuckFromRunning),
     ("manual disconnect blocks reconnect until re-enabled", ManualDisconnectBlocksReconnect),
     ("manual disconnect closes sessions without touching trust", ManualDisconnectClosesSessions),
-    ("queued jobs are worded apart from other waiting states", QueueStatusWording)
+    ("queued jobs are worded apart from other waiting states", QueueStatusWording),
+    ("tray folder pipe name convention", Eslee.QuickSend.Core.Tests.TrayFolderLinkTests.PipeNameConvention),
+    ("tray folder link register/menu/action roundtrip", Eslee.QuickSend.Core.Tests.TrayFolderLinkTests.RegisterMenuAndActionRoundtrip)
 };
 
 var failures = 0;

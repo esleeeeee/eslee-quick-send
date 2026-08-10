@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Runtime.InteropServices;
 using Eslee.QuickSend.Core.Transfers;
+using Eslee.QuickSend.Core.Tray;
 using Eslee.QuickSend.Windows.Persistence;
 using Eslee.QuickSend.Windows.Transfers;
 using Microsoft.UI.Dispatching;
@@ -20,6 +21,7 @@ public sealed partial class MainWindow : Window
     private readonly ObservableCollection<HistoryListItem> _history = [];
     private readonly DispatcherQueue _uiDispatcher;
     private TrayIconService? _tray;
+    private TrayFolderLink? _trayFolderLink;
     private bool _allowClose;
     private bool _closed;
     private int _historyRefreshQueued;
@@ -69,6 +71,29 @@ public sealed partial class MainWindow : Window
             _tray?.Dispose();
             _tray = null;
         }
+
+        // Tray Folder 연동: Hosted 모드에서는 아이콘만 숨기고 수신 대기/전송은 그대로
+        // 유지됩니다. 연결이 끊어지면 링크가 아이콘을 자동 복구합니다.
+        _trayFolderLink = new TrayFolderLink(
+            TrayFolderLink.BuildDefaultPipeName(),
+            "eslee.quicksend",
+            "eslee QuickSend",
+            Environment.ProcessId,
+            visible => RunOnUiAsync(() =>
+            {
+                _tray?.SetTrayIconVisible(visible);
+                return true;
+            }),
+            () => RunOnUiAsync(() =>
+            {
+                ShowAndActivateCore("tray-folder-activate");
+                return true;
+            }),
+            () => RunOnUiAsync(BuildTrayFolderMenuItems),
+            actionId => RunOnUiAsync(() => TryStartTrayFolderMenuAction(actionId)),
+            (eventName, message) => AppServices.Log.Info(eventName, new { message }),
+            (eventName, message) => AppServices.Log.Warn(eventName, new { message }));
+        _trayFolderLink.Start();
 
         LogWindowState("constructor.complete");
     }
@@ -666,6 +691,79 @@ public sealed partial class MainWindow : Window
         AppServices.Log.Info("window.hidden.to_tray", new { hasTransfer, listenerRetained = true });
     }
 
+    private IReadOnlyList<TrayFolderMenuItem> BuildTrayFolderMenuItems() =>
+    [
+        TrayFolderMenuItem.Action("open-app", "QuickSend 열기"),
+        TrayFolderMenuItem.Action("toggle-pause", "일시정지 / 계속"),
+        TrayFolderMenuItem.Separator,
+        TrayFolderMenuItem.Action("exit-app", "종료"),
+    ];
+
+    /// <summary>
+    /// Tray Folder 메뉴에서 클릭된 항목을 자체 트레이 메뉴와 같은 핸들러로 넘깁니다.
+    /// 종료 확인 대화 상자 등이 파이프 응답을 막지 않도록 실행은 큐로 넘기고,
+    /// 알려진 항목인지 여부만 즉시 돌려줍니다.
+    /// </summary>
+    private bool TryStartTrayFolderMenuAction(string actionId)
+    {
+        switch (actionId)
+        {
+            case "open-app":
+                Tray_OpenRequested(this, EventArgs.Empty);
+                return true;
+            case "toggle-pause":
+                Tray_PauseRequested(this, EventArgs.Empty);
+                return true;
+            case "exit-app":
+                Tray_ExitRequested(this, EventArgs.Empty);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private Task<T> RunOnUiAsync<T>(Func<T> callback)
+    {
+        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (_closed)
+        {
+            completion.TrySetCanceled();
+            return completion.Task;
+        }
+
+        if (_uiDispatcher.HasThreadAccess)
+        {
+            try
+            {
+                completion.TrySetResult(callback());
+            }
+            catch (Exception exception)
+            {
+                completion.TrySetException(exception);
+            }
+
+            return completion.Task;
+        }
+
+        var queued = _uiDispatcher.TryEnqueue(() =>
+        {
+            try
+            {
+                completion.TrySetResult(callback());
+            }
+            catch (Exception exception)
+            {
+                completion.TrySetException(exception);
+            }
+        });
+        if (!queued)
+        {
+            completion.TrySetCanceled();
+        }
+
+        return completion.Task;
+    }
+
     private void Tray_OpenRequested(object? sender, EventArgs e)
     {
         AppServices.Log.Info("tray.open.callback.enter");
@@ -715,6 +813,8 @@ public sealed partial class MainWindow : Window
         AppServices.History.Changed -= Store_Changed;
         AppServices.Coordinator.RunningTransfersChanged -= Store_Changed;
         AppWindow.Closing -= AppWindow_Closing;
+        _trayFolderLink?.Dispose();
+        _trayFolderLink = null;
         if (_tray is not null)
         {
             _tray.OpenRequested -= Tray_OpenRequested;
