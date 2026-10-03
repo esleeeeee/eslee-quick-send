@@ -34,6 +34,16 @@ public sealed partial class MainWindow : Window
 
         AppServices.Log.Info("window.constructor.start", new { threadId = Environment.CurrentManagedThreadId });
         InitializeComponent();
+        try
+        {
+            var addresses = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+                .Where(n => n.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
+                .SelectMany(n => n.GetIPProperties().UnicastAddresses)
+                .Where(a => a.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !System.Net.IPAddress.IsLoopback(a.Address))
+                .Select(a => $"{a.Address}:{Eslee.QuickSend.Core.Protocol.ProtocolConstants.DefaultPort}");
+            LocalEndpointsText.Text = "직접 연결 IP: " + string.Join(", ", addresses);
+        }
+        catch (System.Net.NetworkInformation.NetworkInformationException) { LocalEndpointsText.Text = "직접 연결 IP를 확인할 수 없습니다"; }
         AppServices.Log.Info("window.xaml.initialized");
 
         DeviceList.ItemsSource = _devices;
@@ -268,8 +278,8 @@ public sealed partial class MainWindow : Window
         {
             XamlRoot = Content.XamlRoot,
             Title = "전송을 취소하시겠습니까?",
-            Content = $"현재 {TransferredText.Text}를 안전하게 받았습니다. 취소하면 미완료 데이터가 삭제됩니다.",
-            PrimaryButtonText = "취소하고 삭제",
+            Content = $"현재 {TransferredText.Text}를 안전하게 받았습니다. 취소하면 전송이 중단됩니다. 이미 받은 파일과 미완료 데이터는 자동으로 삭제하지 않습니다.",
+            PrimaryButtonText = "전송 취소",
             CloseButtonText = "계속 전송",
             DefaultButton = ContentDialogButton.Close
         };

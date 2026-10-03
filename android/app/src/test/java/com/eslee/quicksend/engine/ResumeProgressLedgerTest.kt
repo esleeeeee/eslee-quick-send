@@ -8,7 +8,7 @@ import java.util.UUID
 
 class ResumeProgressLedgerTest {
     @Test
-    fun reconnectCannotMoveProgressBehindDurableCheckpoint() {
+    fun reconnectCanRepairCorruptionButSessionCheckpointsCannotMoveBackward() {
         val fileId = UUID.randomUUID()
         val ledger = ResumeProgressLedger()
 
@@ -19,11 +19,12 @@ class ResumeProgressLedgerTest {
             ResumeProgressLedger.overallCommitted(1_000L, ledger.committedOffset(fileId)),
         )
 
+        assertEquals(64L, ledger.observeResume(fileId, 64L))
         try {
-            ledger.observeResume(fileId, 0L)
-            fail("Expected a backwards receiver resume to be rejected")
+            ledger.observeCheckpoint(fileId, 0L)
+            fail("Expected a backwards session checkpoint to be rejected")
         } catch (_: ProtocolException) {
-            assertEquals(128L, ledger.committedOffset(fileId))
+            assertEquals(64L, ledger.committedOffset(fileId))
         }
     }
 }

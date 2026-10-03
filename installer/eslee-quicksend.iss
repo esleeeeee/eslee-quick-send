@@ -9,7 +9,7 @@
 ; uninstalling never touches the database, certificate or trusted devices.
 
 #define AppName "eslee QuickSend"
-#define AppVersion "0.0.3"
+#define AppVersion "0.0.4"
 #define AppPublisher "eslee"
 #define AppExeName "eslee QuickSend.exe"
 #define PublishDir "..\src\QuickSend.Windows\bin\Release\net10.0-windows10.0.26100.0\win-x64\publish"
@@ -20,7 +20,7 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppPublisher}
-VersionInfoVersion=0.0.3.0
+VersionInfoVersion=0.0.4.0
 VersionInfoProductName={#AppName}
 VersionInfoCompany={#AppPublisher}
 DefaultDirName={localappdata}\Programs\{#AppName}
@@ -45,7 +45,11 @@ CloseApplicationsFilter=*.exe
 RestartApplications=no
 
 [Languages]
+#if FileExists(CompilerPath + "\Languages\Korean.isl")
 Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
+#elif FileExists(CompilerPath + "\Languages\Unofficial\Korean.isl")
+Name: "korean"; MessagesFile: "compiler:Languages\Unofficial\Korean.isl"
+#endif
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]

@@ -4,10 +4,10 @@ using Eslee.QuickSend.Windows.Persistence;
 
 namespace Eslee.QuickSend.Windows.Security;
 
-public sealed class DeviceIdentityService(AppDatabase database)
+public sealed class DeviceIdentityService(AppDatabase database, DeviceIdentity? suppliedIdentity = null)
 {
     private const string CertificateSubject = "CN=eslee QuickSend Device";
-    private DeviceIdentity? _cached;
+    private DeviceIdentity? _cached = suppliedIdentity;
 
     public async ValueTask<DeviceIdentity> GetOrCreateAsync(CancellationToken cancellationToken = default)
     {

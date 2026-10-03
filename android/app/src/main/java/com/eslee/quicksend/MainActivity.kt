@@ -175,6 +175,9 @@ class MainActivity : ComponentActivity() {
             "android.permissions.result",
             fields,
         )
+        if(results.values.any{!it}){
+            android.widget.Toast.makeText(this,"알림 권한이 거부되었습니다. 전송은 사용할 수 있지만 진행 알림은 제한됩니다. 설정 > 앱 > QuickSend > 알림에서 허용할 수 있습니다.",android.widget.Toast.LENGTH_LONG).show()
+        }
         startRuntimeAfterUi()
     }
 

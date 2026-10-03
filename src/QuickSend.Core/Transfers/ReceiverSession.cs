@@ -46,6 +46,7 @@ public sealed class ReceiverSession : IAsyncDisposable
             if (_partial is not null)
                 return;
             var path = _record.PartialPath!;
+            SafePath.RejectReparsePoints(path);
             Directory.CreateDirectory(Path.GetDirectoryName(path) ?? throw new IOException("Partial path has no parent directory."));
             _partial = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read, _record.ChunkSize,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
@@ -64,15 +65,44 @@ public sealed class ReceiverSession : IAsyncDisposable
                 safe = Math.Min(_record.Size, (long)_merkle.LeafCount * _record.ChunkSize);
             }
 
+            // Stored leaves describe durable bytes, but are not evidence that those bytes
+            // still exist unchanged after a restart. Rewind to the last verified boundary.
+            _partial.Position = 0;
+            var buffer = new byte[_record.ChunkSize];
+            var leaves = _merkle.ExportLeaves();
+            for (long offset = 0; offset < safe; offset += _record.ChunkSize)
+            {
+                var length = (int)Math.Min(_record.ChunkSize, safe - offset);
+                await _partial.ReadExactlyAsync(buffer.AsMemory(0, length), cancellationToken).ConfigureAwait(false);
+                var actual = new MerkleAccumulator();
+                actual.AddChunk(buffer.AsSpan(0, length));
+                if (!System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(actual.ExportLeaves(), leaves.AsSpan(checked((int)(offset / _record.ChunkSize) * 32), 32)))
+                {
+                    safe = offset;
+                    _merkle = MerkleAccumulator.ImportLeaves(leaves.AsSpan(0, checked((int)(offset / _record.ChunkSize) * 32)));
+                    break;
+                }
+            }
+
             if (_partial.Length != safe)
             {
                 _partial.SetLength(safe);
                 _partial.Flush(flushToDisk: true);
             }
             _partial.Position = safe;
-            _record = _record with { ReceivedOffset = safe, CommittedOffset = safe, MerkleLeaves = _merkle.ExportLeaves() };
+            var verified = _record with { ReceivedOffset = safe, CommittedOffset = safe, MerkleLeaves = _merkle.ExportLeaves() };
+            if (safe < _record.CommittedOffset)
+                await _store.RestoreCheckpointAsync(_record.FileId, _record.CommittedOffset, safe, verified.MerkleLeaves, DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
+            else
+                await _store.SaveCheckpointAsync(_record.FileId, safe, verified.MerkleLeaves, DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
+            _record = verified;
             _checkpointPolicy.Restore(safe, DateTimeOffset.UtcNow);
-            await _store.SaveCheckpointAsync(_record.FileId, safe, _record.MerkleLeaves, DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (_partial is not null) await _partial.DisposeAsync().ConfigureAwait(false);
+            _partial = null;
+            throw;
         }
         finally
         {
@@ -154,8 +184,10 @@ public sealed class ReceiverSession : IAsyncDisposable
             _partial = null;
 
             var desired = _record.FinalPath ?? throw new IOException("Final path is not configured.");
+            SafePath.RejectReparsePoints(desired);
             Directory.CreateDirectory(Path.GetDirectoryName(desired) ?? throw new IOException("Final path has no parent directory."));
             var finalPath = SafePath.ChooseNonConflictingPath(desired);
+            SafePath.RejectReparsePoints(finalPath);
             File.Move(_record.PartialPath!, finalPath);
             await _store.MarkFileCompletedAsync(_record.FileId, finalPath, root, now, cancellationToken).ConfigureAwait(false);
             _record = _record with { FinalPath = finalPath, State = TransferState.Completed };

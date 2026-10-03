@@ -10,6 +10,9 @@ using Eslee.QuickSend.Core.Transfers;
 
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("selected identity binding", SelectedIdentity),
+    ("committed corruption retransmitted", CommittedCorruption),
+    ("link publication rejected", LinkPublication),
     ("frame roundtrip", FrameRoundtrip),
     ("DNS-SD discovery contract", DiscoveryContract),
     ("chunk roundtrip and hash", ChunkRoundtrip),
@@ -23,7 +26,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("drag-drop file and folder expansion", DragDropSourceExpansion),
     ("completed partial chunk remains resumable", FinalPartialResume),
     ("durable disconnect resume roundtrip", DurableResumeRoundtrip),
-    ("resume progress never moves behind durable state", ResumeProgressNeverRegresses),
+    ("resume rewind resets session checkpoint boundary", ResumeProgressNeverRegresses),
     ("completed file replay preserves final file", CompletedReplayPreservesFile),
     ("checkpoint reconnect resumes without replay and consumes final checkpoint", FinalCheckpointBeforeAck),
     ("uncommitted bytes roll back after restart", UncommittedRollback),
@@ -55,6 +58,80 @@ foreach (var test in tests)
 
 Console.WriteLine($"{tests.Length - failures}/{tests.Length} tests passed");
 return failures == 0 ? 0 : 1;
+
+static Task SelectedIdentity()
+{
+    var trusted = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ABC", "DEF" };
+    True(PeerIdentity.CanAuthenticate("ABC", "ABC", false, trusted));
+    False(PeerIdentity.CanAuthenticate("ABC", "DEF", false, trusted));
+    True(PeerIdentity.CanAuthenticate("NEW", "NEW", true, trusted));
+    False(PeerIdentity.CanAuthenticate("NEW", "DEF", true, trusted));
+    False(PeerIdentity.CanAuthenticate("NEW", "NEW", false, trusted));
+    PeerIdentity.ValidateSelected("A", "ABC", "A", "abc");
+    Throws<IOException>(() => PeerIdentity.ValidateSelected("A", "ABC", "B", "DEF"));
+    Throws<IOException>(() => PeerIdentity.ValidateSelected("A", "ABC", "B", "ABC"));
+    False(PeerIdentity.MatchesFingerprint("", ""));
+    return Task.CompletedTask;
+}
+
+static async Task CommittedCorruption()
+{
+    var directory = Path.Combine(Path.GetTempPath(), "esq-corruption-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        var fileId = Guid.NewGuid();
+        var data = Enumerable.Range(0, 24).Select(i => (byte)i).ToArray();
+        var record = NewReceiverRecord(directory, fileId, data.Length, 8);
+        var store = new MemoryTransferStore(record);
+        await using (var receiver = new ReceiverSession(record, store, new CheckpointPolicy(8, TimeSpan.FromHours(1))))
+        {
+            await receiver.InitializeAsync();
+            await receiver.ReceiveChunkAsync(await CreateChunkPayload(fileId, 0, data[..8]), DateTimeOffset.UtcNow);
+            await receiver.ReceiveChunkAsync(await CreateChunkPayload(fileId, 8, data[8..16]), DateTimeOffset.UtcNow);
+        }
+        var bytes = File.ReadAllBytes(record.PartialPath!); bytes[9] ^= 1;
+        File.WriteAllBytes(record.PartialPath!, bytes);
+        await using var resumed = new ReceiverSession(store.File, store);
+        store.FailNextCheckpoint = true;
+        await ThrowsAsync<IOException>(() => resumed.InitializeAsync().AsTask());
+        await resumed.InitializeAsync(); // failed initialization must not bypass verification/persistence
+        Equal(8L, resumed.CommittedOffset); Equal(1, resumed.CreateResumeInfo().CommittedLeaves);
+        Equal(8L, new FileInfo(record.PartialPath!).Length);
+        await resumed.ReceiveChunkAsync(await CreateChunkPayload(fileId, 8, data[8..16]), DateTimeOffset.UtcNow);
+        await resumed.ReceiveChunkAsync(await CreateChunkPayload(fileId, 16, data[16..]), DateTimeOffset.UtcNow);
+        var merkle = new MerkleAccumulator();
+        for (var offset = 0; offset < data.Length; offset += 8) merkle.AddChunk(data.AsSpan(offset, 8));
+        var completed = await resumed.CompleteAsync(new FileCompleteMessage(fileId, data.Length, 3, Convert.ToBase64String(merkle.ComputeRoot())), DateTimeOffset.UtcNow);
+        True(System.Security.Cryptography.SHA256.HashData(data).AsSpan().SequenceEqual(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(completed))));
+    }
+    finally { Directory.Delete(directory, true); }
+}
+
+static async Task LinkPublication()
+{
+    var directory = Path.Combine(Path.GetTempPath(), "esq-link-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    var outside = Directory.CreateDirectory(Path.Combine(directory, "outside")).FullName;
+    var receive = Directory.CreateDirectory(Path.Combine(directory, "receive")).FullName;
+    var link = Path.Combine(receive, "linked");
+    try
+    {
+        foreach (var unsafePath in new[] { "a:stream", "CON.txt", "COM\u00B9.txt", "LPT\u00B2", "a./file", "a /file", "../escape" })
+            Throws<IOException>(() => SafePath.ResolveUnderRoot(receive, unsafePath));
+        Equal(Path.Combine(receive, "nested", "file.txt"), SafePath.ResolveUnderRoot(receive, "nested/file.txt"));
+        // Junction creation does not require Developer Mode or symbolic-link privilege.
+        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{outside}\"") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true });
+        await process!.WaitForExitAsync(); Equal(0, process.ExitCode);
+        Throws<IOException>(() => SafePath.ResolveUnderRoot(receive, "linked/escaped.txt"));
+        var record = NewReceiverRecord(directory, Guid.NewGuid(), 0, 8) with { FinalPath = Path.Combine(link, "escaped.txt") };
+        await using var receiver = new ReceiverSession(record, new MemoryTransferStore(record));
+        await receiver.InitializeAsync();
+        await ThrowsAsync<IOException>(() => receiver.CompleteAsync(new FileCompleteMessage(record.FileId, 0, 0, Convert.ToBase64String(new MerkleAccumulator().ComputeRoot())), DateTimeOffset.UtcNow).AsTask());
+        False(File.Exists(Path.Combine(outside, "escaped.txt")));
+    }
+    finally { if (Directory.Exists(link)) Directory.Delete(link); Directory.Delete(directory, true); }
+}
 
 static Task DiscoveryContract()
 {
@@ -272,8 +349,10 @@ static Task ResumeProgressNeverRegresses()
     Equal(64L, ledger.ObserveResume(fileId, 64));
     Equal(128L, ledger.ObserveCheckpoint(fileId, 128));
     Equal(1_128L, ResumeProgressLedger.OverallCommitted(1_000, ledger.GetCommittedOffset(fileId)));
-    Throws<ProtocolException>(() => ledger.ObserveResume(fileId, 0));
-    Equal(128L, ledger.GetCommittedOffset(fileId));
+    Equal(64L, ledger.ObserveResume(fileId, 64));
+    Equal(64L, ledger.GetCommittedOffset(fileId));
+    Throws<ProtocolException>(() => ledger.ObserveCheckpoint(fileId, 0));
+    Equal(128L, ledger.ObserveCheckpoint(fileId, 128));
     return Task.CompletedTask;
 }
 
@@ -660,6 +739,7 @@ sealed class MemoryTransferStore(TransferFileRecord file) : ITransferStore
 {
     private TransferFileRecord _file = file;
     public TransferFileRecord File => _file;
+    public bool FailNextCheckpoint { get; set; }
 
     public ValueTask UpsertJobAsync(TransferJobRecord job, CancellationToken cancellationToken) => ValueTask.CompletedTask;
     public ValueTask UpsertFileAsync(TransferFileRecord value, CancellationToken cancellationToken)
@@ -669,8 +749,14 @@ sealed class MemoryTransferStore(TransferFileRecord file) : ITransferStore
     }
     public ValueTask SaveCheckpointAsync(Guid fileId, long committedOffset, byte[] merkleLeaves, DateTimeOffset at, CancellationToken cancellationToken)
     {
+        if (FailNextCheckpoint) { FailNextCheckpoint = false; throw new IOException("injected checkpoint failure"); }
         _file = _file with { CommittedOffset = committedOffset, MerkleLeaves = merkleLeaves };
         return ValueTask.CompletedTask;
+    }
+    public ValueTask RestoreCheckpointAsync(Guid fileId, long expectedCommittedOffset, long committedOffset, byte[] merkleLeaves, DateTimeOffset at, CancellationToken cancellationToken)
+    {
+        if (_file.CommittedOffset != expectedCommittedOffset) throw new IOException("Stale recovery checkpoint");
+        return SaveCheckpointAsync(fileId, committedOffset, merkleLeaves, at, cancellationToken);
     }
     public ValueTask MarkFileCompletedAsync(Guid fileId, string finalPath, byte[] merkleRoot, DateTimeOffset at, CancellationToken cancellationToken) => ValueTask.CompletedTask;
     public ValueTask<TransferFileRecord?> FindFileAsync(Guid fileId, CancellationToken cancellationToken) => ValueTask.FromResult<TransferFileRecord?>(_file);
