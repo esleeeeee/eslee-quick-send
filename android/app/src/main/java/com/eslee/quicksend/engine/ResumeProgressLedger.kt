@@ -11,8 +11,12 @@ import java.util.UUID
 class ResumeProgressLedger {
     private val committedOffsets = mutableMapOf<UUID, Long>()
 
-    fun observeResume(fileId: UUID, committedOffset: Long): Long =
-        observe(fileId, committedOffset, "Receiver resume")
+    fun observeResume(fileId: UUID, committedOffset: Long): Long {
+        if (committedOffset < 0) throw ProtocolException("Receiver resume offset cannot be negative")
+        // The receiver may repair corrupt durable bytes before a new session.
+        committedOffsets[fileId] = committedOffset
+        return committedOffset
+    }
 
     fun observeCheckpoint(fileId: UUID, committedOffset: Long): Long =
         observe(fileId, committedOffset, "Receiver checkpoint")

@@ -33,3 +33,12 @@ cd C:\qs-eslee-android
 ## 장애 주입 확장점
 
 현재 deterministic 테스트는 청크 손상, 연결 종료 후 재생성, checkpoint 전 크래시를 in-process로 재현한다. 실제 socket ACK drop/delay, N MiB 후 RST, DB 지연, 무작위 단절은 별도 debug transport decorator로 추가할 수 있으며 release UI에는 노출하지 않는다.
+
+
+## Isolated Windows network and disk check
+
+`dotnet run --project tests/QuickSend.Network.Checks -- 67108864` runs actual loopback TCP/TLS with generated identities and separate SQLite databases under a temporary directory. It exchanges the pairing protocol with matching SAS, rejects a trusted endpoint presenting another selected device's identity before application bytes, disconnects after a durable checkpoint, corrupts one stored chunk, reopens identity/database state, resumes from the last verified chunk, and checks the published file's SHA-256. User certificate stores are never opened; Schannel imports only generated QA keys without `PersistKeySet`, disposed at the end.
+
+The byte-count argument can be increased after checking free space. On 2026-10-03, `10737418240` (10 GiB, fully written, not sparse) passed in approximately 66 seconds with a final SHA-256 of `09823A97B9C380BA0F2B6BA8540F78F24A423FE8B3BFDBA8A6DA9DDC62A038FE`. The 16 MiB checkpoint rewound to 8 MiB after corruption, then completed. Temporary source, output, identity and database files were removed. This verifies Windows loopback/NTFS/SQLite/Schannel, not physical LAN, Android SAF, screen-off or released-binary compatibility.
+
+The integration check exposed and fixed a SQLite-only recovery issue: ordinary checkpoints remain monotonic, while a verified recovery write explicitly compares the previous persisted offset before rewinding. The persistence executable separately rejects stale recovery writes.

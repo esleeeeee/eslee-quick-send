@@ -169,6 +169,7 @@
                             <TextBlock x:Name="DeviceNameText" Text="초기화 중..." TextWrapping="Wrap" />
                             <Button Content="기기 이름 변경" Click="RenameDevice_Click" />
                             <TextBlock x:Name="ReceiveFolderText" Text="수신 폴더 확인 중..." TextWrapping="Wrap" Opacity="0.65" FontSize="12" />
+                            <TextBlock x:Name="LocalEndpointsText" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="12" />
                             <TextBlock x:Name="VersionText" TextWrapping="Wrap" Opacity="0.65" FontSize="12" />
                             <TextBlock
                                 x:Name="UpdateStatusText"

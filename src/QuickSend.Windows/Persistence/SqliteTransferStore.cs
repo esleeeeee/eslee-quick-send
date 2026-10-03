@@ -60,7 +60,16 @@ public sealed class SqliteTransferStore(AppDatabase database) : ITransferStore
         RaiseChanged();
     }
 
-    public async ValueTask SaveCheckpointAsync(Guid fileId, long committedOffset, byte[] merkleLeaves, DateTimeOffset at, CancellationToken cancellationToken)
+    public ValueTask SaveCheckpointAsync(Guid fileId, long committedOffset, byte[] merkleLeaves, DateTimeOffset at, CancellationToken cancellationToken) =>
+        SaveCheckpointCoreAsync(fileId, committedOffset, merkleLeaves, at, null, cancellationToken);
+
+    public ValueTask RestoreCheckpointAsync(Guid fileId, long expectedCommittedOffset, long committedOffset, byte[] merkleLeaves, DateTimeOffset at, CancellationToken cancellationToken)
+    {
+        if (committedOffset < 0 || committedOffset > expectedCommittedOffset) throw new ArgumentOutOfRangeException(nameof(committedOffset));
+        return SaveCheckpointCoreAsync(fileId, committedOffset, merkleLeaves, at, expectedCommittedOffset, cancellationToken);
+    }
+
+    private async ValueTask SaveCheckpointCoreAsync(Guid fileId, long committedOffset, byte[] merkleLeaves, DateTimeOffset at, long? expectedCommittedOffset, CancellationToken cancellationToken)
     {
         await using var connection = database.OpenConnection();
         await connection.OpenAsync(cancellationToken);
@@ -69,8 +78,12 @@ public sealed class SqliteTransferStore(AppDatabase database) : ITransferStore
         command.Transaction = (SqliteTransaction)transaction;
         command.CommandText = """
             UPDATE transfer_files SET received_offset=$offset, committed_offset=$offset, merkle_leaves=$leaves,
-              state=$state, updated_utc=$at WHERE file_id=$id AND committed_offset <= $offset;
+              state=$state, updated_utc=$at WHERE file_id=$id AND
+              (($previous IS NULL AND committed_offset <= $offset) OR
+               ($previous IS NOT NULL AND committed_offset = $previous AND state <> $completed));
             """;
+        command.Parameters.Add("$previous", SqliteType.Integer).Value = (object?)expectedCommittedOffset ?? DBNull.Value;
+        command.Parameters.AddWithValue("$completed", (int)TransferState.Completed);
         command.Parameters.AddWithValue("$offset", committedOffset);
         command.Parameters.Add("$leaves", SqliteType.Blob).Value = merkleLeaves;
         command.Parameters.AddWithValue("$state", (int)TransferState.Transferring);

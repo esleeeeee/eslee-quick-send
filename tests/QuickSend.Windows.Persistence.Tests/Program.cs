@@ -234,6 +234,21 @@ try
 
     Console.WriteLine("PASS Update tag/version parsing and prerelease exclusion");
     Console.WriteLine("PASS Update interval gate and cache round-trip");
+    var repairDatabase = new AppDatabase(Path.Combine(root, "repair.db")); await repairDatabase.InitializeAsync();
+    var repairStore = new SqliteTransferStore(repairDatabase);
+    var repairTransfer = Guid.NewGuid(); var repairFile = Guid.NewGuid();
+    await repairStore.UpsertJobAsync(new(repairTransfer, "qa-source", "qa-destination", TransferDirection.Receive,
+        TransferState.Transferring, now, now), default);
+    await repairStore.UpsertFileAsync(new(repairTransfer, repairFile, "repair.bin", sourcePath, Path.Combine(root, "repair.part"),
+        Path.Combine(root, "repair.bin"), 24, 0, null, 8, 16, 16, new byte[64], TransferState.Transferring), default);
+    try { await repairStore.SaveCheckpointAsync(repairFile, 8, new byte[32], now, default); throw new Exception("Ordinary checkpoint moved backwards."); }
+    catch (InvalidOperationException) { }
+    try { await repairStore.RestoreCheckpointAsync(repairFile, 8, 0, [], now, default); throw new Exception("Stale recovery overwrote checkpoint."); }
+    catch (InvalidOperationException) { }
+    await repairStore.RestoreCheckpointAsync(repairFile, 16, 8, new byte[32], now, default);
+    var repaired = await new SqliteTransferStore(new AppDatabase(Path.Combine(root, "repair.db"))).FindFileAsync(repairFile, default);
+    Assert(repaired!.CommittedOffset == 8 && repaired.MerkleLeaves.Length == 32, "Verified rewind did not survive reopen.");
+    Console.WriteLine("PASS SQLite verified rewind persists while ordinary/stale checkpoints are rejected");
     return 0;
 }
 catch (Exception error)

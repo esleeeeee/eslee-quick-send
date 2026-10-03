@@ -6,8 +6,14 @@ public sealed class ResumeProgressLedger
 {
     private readonly Dictionary<Guid, long> _committedOffsets = [];
 
-    public long ObserveResume(Guid fileId, long committedOffset) =>
-        Observe(fileId, committedOffset, "Receiver resume");
+    public long ObserveResume(Guid fileId, long committedOffset)
+    {
+        if (committedOffset < 0) throw new ProtocolException("Receiver resume offset cannot be negative.");
+        // A new authenticated session may have repaired corrupt durable bytes.
+        // Checkpoints within that session must still be monotonic.
+        _committedOffsets[fileId] = committedOffset;
+        return committedOffset;
+    }
 
     public long ObserveCheckpoint(Guid fileId, long committedOffset) =>
         Observe(fileId, committedOffset, "Receiver checkpoint");

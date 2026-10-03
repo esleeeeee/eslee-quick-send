@@ -8,8 +8,23 @@ namespace Eslee.QuickSend.Windows;
 
 public static class AppServices
 {
+    [System.Runtime.InteropServices.DllImport("shell32.dll")]
+    private static extern int SHGetKnownFolderPath(in Guid folderId, uint flags, IntPtr token, out IntPtr path);
+
+    private static string DownloadsFolder()
+    {
+        var id = new Guid("374DE290-123F-4565-9164-39C4925E467B");
+        var result = SHGetKnownFolderPath(in id, 0, IntPtr.Zero, out var pointer);
+        try
+        {
+            System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(result);
+            return System.Runtime.InteropServices.Marshal.PtrToStringUni(pointer) ?? throw new IOException("Downloads folder is unavailable.");
+        }
+        finally { if (pointer != IntPtr.Zero) System.Runtime.InteropServices.Marshal.FreeCoTaskMem(pointer); }
+    }
+
     private static readonly string DataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "eslee", "QuickSend");
-    public static string ReceiveDirectory { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "eslee QuickSend");
+    public static string ReceiveDirectory { get; } = Path.Combine(DownloadsFolder(), "eslee QuickSend");
     public static DiagnosticLog Log { get; } = new(Path.Combine(DataDirectory, "logs"));
     public static AppDatabase Database { get; } = new(Path.Combine(DataDirectory, "quicksend.db"));
     public static SqliteTransferStore TransferStore { get; } = new(Database);

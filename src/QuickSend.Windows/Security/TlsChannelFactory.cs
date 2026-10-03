@@ -1,3 +1,4 @@
+using Eslee.QuickSend.Core.Devices;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
@@ -12,7 +13,7 @@ public sealed class TlsChannelFactory(
     DeviceIdentityService identityService,
     DiagnosticLog log)
 {
-    public async ValueTask<SslStream> ConnectAsync(string host, int port, bool pairingOnly, CancellationToken cancellationToken)
+    public async ValueTask<SslStream> ConnectAsync(string host, int port, bool pairingOnly, string expectedFingerprint, CancellationToken cancellationToken)
     {
         var identity = await identityService.GetOrCreateAsync(cancellationToken);
         var trusted = await trust.GetFingerprintsAsync(cancellationToken);
@@ -37,7 +38,7 @@ public sealed class TlsChannelFactory(
         }
 
         var ssl = new SslStream(client.GetStream(), leaveInnerStreamOpen: false, (_, certificate, _, _) =>
-            certificate is not null && (pairingOnly || trusted.Contains(DeviceIdentityService.Fingerprint(new X509Certificate2(certificate)))));
+            certificate is not null && PeerIdentity.CanAuthenticate(expectedFingerprint, DeviceIdentityService.Fingerprint(new X509Certificate2(certificate)), pairingOnly, trusted));
         try
         {
             await log.InfoAsync("outgoing.tls.begin", new { host, port, pairingOnly, trustedCount = trusted.Count }).ConfigureAwait(false);

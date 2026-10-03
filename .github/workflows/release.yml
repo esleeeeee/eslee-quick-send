@@ -1,0 +1,63 @@
+name: Windows release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+  DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false'
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Verify tag and regression tests
+        shell: pwsh
+        run: |
+          [xml]$props = Get-Content Directory.Build.props
+          if ("v$($props.Project.PropertyGroup.Version)" -ne $env:GITHUB_REF_NAME) { throw 'Tag/version mismatch' }
+          if (-not (Test-Path ".github/release-notes/$env:GITHUB_REF_NAME.md")) { throw 'Missing release notes' }
+          dotnet run --project tests/QuickSend.Core.Tests -c Release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet run --project tests/QuickSend.Windows.Persistence.Tests -c Release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Publish application
+        run: dotnet publish src/QuickSend.Windows -c Release -r win-x64 --self-contained true -p:DebugType=None -p:DebugSymbols=false
+      - name: Package Windows downloads
+        shell: pwsh
+        run: |
+          choco install innosetup --yes --no-progress
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' installer/eslee-quicksend.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $publish = 'src/QuickSend.Windows/bin/Release/net10.0-windows10.0.26100.0/win-x64/publish'
+          foreach ($file in @('eslee QuickSend.exe','eslee QuickSend.pri','App.xbf','MainWindow.xbf')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $publish $file))) { throw "Missing WinUI payload: $file" }
+          }
+          Compress-Archive -Path "$publish/*" -DestinationPath "artifacts/installer/eslee-QuickSend-Windows-x64-$env:GITHUB_REF_NAME-Portable.zip"
+          $hashes = @("artifacts/installer/eslee-QuickSend-Windows-x64-$env:GITHUB_REF_NAME-Setup.exe", "artifacts/installer/eslee-QuickSend-Windows-x64-$env:GITHUB_REF_NAME-Portable.zip") | Get-FileHash -Algorithm SHA256
+          $hashes | ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } | Set-Content artifacts/installer/SHA256SUMS.txt
+          @{source_sha=$env:GITHUB_SHA; run_id=$env:GITHUB_RUN_ID; platform='Windows'; checks=@('Core regression','SQLite persistence regression','Release publish'); hashes=@($hashes | Select-Object @{n='file';e={[IO.Path]::GetFileName($_.Path)}},Hash)} | ConvertTo-Json -Depth 5 | Set-Content artifacts/installer/verification-manifest.json
+          $manifestHash = (Get-FileHash artifacts/installer/verification-manifest.json -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$manifestHash  verification-manifest.json" | Add-Content artifacts/installer/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: artifacts/installer/*
+          if-no-files-found: error
+      - name: Publish new release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = @("artifacts/installer/eslee-QuickSend-Windows-x64-$env:GITHUB_REF_NAME-Setup.exe", "artifacts/installer/eslee-QuickSend-Windows-x64-$env:GITHUB_REF_NAME-Portable.zip", "artifacts/installer/SHA256SUMS.txt", "artifacts/installer/verification-manifest.json")
+          gh release create $env:GITHUB_REF_NAME @files --verify-tag --title "eslee QuickSend $env:GITHUB_REF_NAME" --notes-file ".github/release-notes/$env:GITHUB_REF_NAME.md"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }

@@ -1,3 +1,4 @@
+using Eslee.QuickSend.Core.Devices;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
@@ -422,7 +423,7 @@ public sealed class TransferCoordinator : IDisposable
             fileCount = files.Count,
             connectionId
         }).ConfigureAwait(false);
-        await using var stream = await _tls.ConnectAsync(device.Address.ToString(), device.Port, pairingOnly: !trusted, cancellationToken);
+        await using var stream = await _tls.ConnectAsync(device.Address.ToString(), device.Port, pairingOnly: !trusted, expectedFingerprint: device.IdentityFingerprint, cancellationToken);
         await _log.InfoAsync("outgoing.connection.established", new
         {
             connectionId,
@@ -444,6 +445,7 @@ public sealed class TransferCoordinator : IDisposable
             remoteHello.IdentityFingerprint
         }).ConfigureAwait(false);
         ValidatePeer(stream, remoteHello);
+        PeerIdentity.ValidateSelected(device.DeviceId, device.IdentityFingerprint, remoteHello.DeviceId, remoteHello.IdentityFingerprint);
         await _log.InfoAsync("outgoing.peer.validated", new { remoteHello.DeviceId, trusted }).ConfigureAwait(false);
         await EnsurePairedAsClientAsync(reader, writer, local, remoteHello, trusted, cancellationToken);
         await _log.InfoAsync("outgoing.session.ready", new { remoteHello.DeviceId, job.TransferId, connectionId }).ConfigureAwait(false);
